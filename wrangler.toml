@@ -1,0 +1,31 @@
+name = "melodi-bot"
+main = "bot-worker.js"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 Database — order and customer storage
+[[d1_databases]]
+binding = "DB"
+database_name = "melodi-orders"
+database_id = "e21bdb71-aa72-4710-b1b9-e0dc1deff640"
+
+# KV Namespace — session state
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "91ff4ab853994094bc32f5813a1d5fcd"
+
+# R2 Bucket — song file storage
+[[r2_buckets]]
+binding = "SONGS"
+bucket_name = "melodi-songs"
+
+# Secrets (set via: wrangler secret put BOT_TOKEN)
+# BOT_TOKEN = your Telegram bot token
+
+[triggers]
+crons = []
+
+# Route: all requests to the worker
+[[routes]]
+pattern = "melodi-bot.*.workers.dev/*"
+zone_name = ""

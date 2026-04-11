@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Melodi</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Outfit:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0d0a1a; overflow:hidden; font-family:'Outfit',sans-serif; }
+#canvas-container { position:fixed; top:0; left:0; width:100%; height:100%; }
+#canvas-container canvas { display:block; }
+
+.ui-layer {
+  position:fixed; top:0; left:0; width:100%; height:100%;
+  display:flex; flex-direction:column;
+  justify-content:space-between; align-items:center;
+  padding:48px 24px 40px; pointer-events:none; z-index:10;
+}
+
+.brand {
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  animation: fadeUp 1.2s ease both;
+}
+.brand-m {
+  font-family:'DM Serif Display',serif;
+  font-size:72px; color:#e9d5ff; letter-spacing:-2px;
+  line-height:1; text-shadow:0 0 60px rgba(168,85,247,0.4);
+}
+.brand-elodi {
+  font-family:'Outfit',sans-serif; font-weight:300;
+  font-size:13px; color:#d8b4fe; letter-spacing:10px;
+  text-transform:uppercase;
+}
+.brand-line {
+  width:120px; height:1px;
+  background:linear-gradient(90deg,transparent,#7c3aed,transparent);
+  margin-top:4px;
+}
+
+.tagline {
+  text-align:center; animation: fadeUp 1.4s ease both;
+  pointer-events:none;
+}
+.tagline p {
+  color:#c4b5fd; font-size:15px; font-weight:300;
+  line-height:1.8; max-width:280px;
+}
+.tagline em {
+  color:#e9d5ff; font-style:normal; font-weight:500;
+}
+
+.cta-area {
+  display:flex; flex-direction:column; align-items:center;
+  gap:14px; animation: fadeUp 1.6s ease both; pointer-events:all;
+}
+.cta-btn {
+  background:linear-gradient(135deg,#7c3aed,#db2777);
+  color:#fff; border:none; border-radius:50px;
+  padding:16px 48px; font-size:16px; font-weight:500;
+  font-family:'Outfit',sans-serif; cursor:pointer;
+  letter-spacing:0.5px;
+  transition:transform 0.2s, opacity 0.2s;
+  box-shadow:0 8px 32px rgba(124,58,237,0.4);
+}
+.cta-btn:active { transform:scale(0.97); opacity:0.9; }
+.cta-sub {
+  color:#7c6fa0; font-size:12px; font-weight:300; text-align:center;
+}
+
+.seed-badge {
+  position:fixed; bottom:16px; right:16px;
+  font-size:10px; color:#3d3060; font-family:monospace;
+  z-index:20; pointer-events:all; cursor:pointer;
+}
+
+@keyframes fadeUp {
+  from { opacity:0; transform:translateY(20px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+
+<div class="ui-layer">
+  <div class="brand">
+    <div class="brand-m">M</div>
+    <div class="brand-line"></div>
+    <div class="brand-elodi">ELODI</div>
+  </div>
+
+  <div class="tagline">
+    <p>Turn your <em>memories</em><br>into music that lasts</p>
+  </div>
+
+  <div class="cta-area">
+    <button class="cta-btn" onclick="handleCTA()">✦ Create a Song</button>
+    <span class="cta-sub">Free preview · $15 for the full song</span>
+  </div>
+</div>
+
+<div class="seed-badge" onclick="nextSeed()" title="Change variation">seed #<span id="seed-display">7741</span></div>
+
+<script>
+// ═══════════════════════════════════════════
+// ALGORITHMIC PHILOSOPHY: "Resonant Memory"
+//
+// Sound is invisible geometry — frequencies
+// that exist only in the moment of listening.
+// This algorithm renders the physics of memory:
+// ripples that originate from a single emotional
+// event, propagate outward, interfere with each
+// other, and leave traces of their passing.
+//
+// The dusk palette (violet → rose) maps to the
+// emotional register of a gift: warmth that has
+// cooled into something permanent.
+//
+// Each seed is a different memory. Same physics,
+// different story.
+// ═══════════════════════════════════════════
+
+let currentSeed = 7741;
+
+// ─── Parameters ───────────────────────────
+const PARAMS = {
+  ringCount:    18,    // Number of propagating rings
+  particleCount:900,   // Ambient dust particles
+  noiseScale:  0.003,  // Perlin turbulence scale
+  flowStrength:1.4,    // How hard noise pushes particles
+  ringSpeed:   0.0006, // Ring expansion rate
+  ringFade:    0.012,  // How fast rings fade
+  trailAlpha:   12,    // Trail opacity (0–255)
+};
+
+// Dusk palette — violet through rose
+const PALETTE = [
+  [168, 85,  247],   // purple-500
+  [192, 38,  211],   // fuchsia-600
+  [219, 39,  119],   // pink-600
+  [236, 72,  153],   // pink-500
+  [139, 92,  246],   // violet-500
+  [109, 40,  217],   // violet-700
+];
+
+let rings = [];
+let particles = [];
+let noiseOffset = 0;
+let p5Instance;
+
+// ─── Particle class ──────────────────────
+class DustParticle {
+  constructor(p) {
+    this.p = p;
+    this.reset();
+    // Scatter randomly on init
+    this.x = p.random(p.width);
+    this.y = p.random(p.height);
+    this.life = p.random(this.maxLife);
+  }
+
+  reset() {
+    const p = this.p;
+    const cx = p.width / 2;
+    const cy = p.height / 2;
+    const angle = p.random(p.TWO_PI);
+    const radius = p.random(20, Math.min(p.width, p.height) * 0.55);
+    this.x = cx + Math.cos(angle) * radius;
+    this.y = cy + Math.sin(angle) * radius;
+    this.vx = 0;
+    this.vy = 0;
+    this.life = 0;
+    this.maxLife = p.random(120, 280);
+    const colorIndex = Math.floor(p.random(PALETTE.length));
+    this.color = PALETTE[colorIndex];
+    this.size = p.random(0.8, 2.2);
+  }
+
+  update() {
+    const p = this.p;
+    // Flow field from layered Perlin noise
+    const nx = this.x * PARAMS.noiseScale + noiseOffset;
+    const ny = this.y * PARAMS.noiseScale + noiseOffset * 0.7;
+    const angle = p.noise(nx, ny) * p.TWO_PI * 2.5;
+
+    // Secondary noise layer for turbulence
+    const nx2 = this.x * PARAMS.noiseScale * 2.3 - noiseOffset * 0.5;
+    const ny2 = this.y * PARAMS.noiseScale * 2.3 - noiseOffset * 0.5;
+    const angle2 = p.noise(nx2, ny2) * p.TWO_PI;
+    const blendAngle = angle * 0.7 + angle2 * 0.3;
+
+    this.vx += Math.cos(blendAngle) * PARAMS.flowStrength * 0.1;
+    this.vy += Math.sin(blendAngle) * PARAMS.flowStrength * 0.1;
+
+    // Velocity damping
+    this.vx *= 0.92;
+    this.vy *= 0.92;
+
+    this.x += this.vx;
+    this.y += this.vy;
+    this.life++;
+
+    if (this.life > this.maxLife ||
+        this.x < 0 || this.x > p.width ||
+        this.y < 0 || this.y > p.height) {
+      this.reset();
+    }
+  }
+
+  draw() {
+    const p = this.p;
+    const lifeRatio = this.life / this.maxLife;
+    // Fade in then out
+    const alpha = lifeRatio < 0.1
+      ? (lifeRatio / 0.1) * PARAMS.trailAlpha
+      : lifeRatio > 0.8
+        ? ((1 - lifeRatio) / 0.2) * PARAMS.trailAlpha
+        : PARAMS.trailAlpha;
+
+    const [r, g, b] = this.color;
+    p.stroke(r, g, b, alpha);
+    p.strokeWeight(this.size);
+    p.point(this.x, this.y);
+  }
+}
+
+// ─── Ring class ──────────────────────────
+class MemoryRing {
+  constructor(p, delay) {
+    this.p = p;
+    this.radius = 0;
+    this.maxRadius = Math.min(p.width, p.height) * p.random(0.28, 0.52);
+    this.alpha = 0;
+    this.delay = delay;
+    this.born = false;
+    this.age = -delay;
+    const colorIndex = Math.floor(p.random(PALETTE.length));
+    this.color = PALETTE[colorIndex];
+    this.strokeW = p.random(0.4, 1.4);
+    this.cx = p.width / 2 + p.random(-30, 30);
+    this.cy = p.height / 2 + p.random(-30, 30);
+    // Each ring is slightly elliptical — memory distorts geometry
+    this.xScale = p.random(0.85, 1.15);
+    this.yScale = p.random(0.85, 1.15);
+  }
+
+  update() {
+    this.age++;
+    if (this.age < 0) return;
+
+    const progress = this.age * PARAMS.ringSpeed;
+    this.radius = this.maxRadius * Math.pow(progress, 0.6);
+
+    // Alpha rises fast, decays slow
+    if (progress < 0.15) {
+      this.alpha = (progress / 0.15) * 180;
+    } else {
+      this.alpha = 180 * Math.pow(1 - (progress - 0.15) / 0.85, 1.8);
+    }
+
+    return this.alpha <= 0.5;  // Returns true when dead
+  }
+
+  draw() {
+    if (this.age < 0 || this.alpha <= 0.5) return;
+    const p = this.p;
+    const [r, g, b] = this.color;
+    p.noFill();
+    p.stroke(r, g, b, this.alpha);
+    p.strokeWeight(this.strokeW);
+    p.push();
+    p.translate(this.cx, this.cy);
+    p.scale(this.xScale, this.yScale);
+    p.ellipse(0, 0, this.radius * 2, this.radius * 2);
+    p.pop();
+  }
+}
+
+// ─── p5 sketch ───────────────────────────
+const sketch = (p) => {
+  p.setup = function() {
+    const container = document.getElementById('canvas-container');
+    const canvas = p.createCanvas(container.offsetWidth, container.offsetHeight);
+    canvas.parent('canvas-container');
+    p.colorMode(p.RGB, 255, 255, 255, 255);
+    initSystem(p);
+    p.background(13, 10, 26);
+  };
+
+  p.draw = function() {
+    // Translucent overlay — creates trails
+    p.fill(13, 10, 26, 18);
+    p.noStroke();
+    p.rect(0, 0, p.width, p.height);
+
+    noiseOffset += 0.0012;
+
+    // Update and draw rings
+    rings = rings.filter(ring => {
+      const isDead = ring.update();
+      ring.draw();
+      return !isDead;
+    });
+
+    // Respawn dead rings continuously
+    if (rings.length < PARAMS.ringCount) {
+      rings.push(new MemoryRing(p, Math.floor(p.random(0, 200))));
+    }
+
+    // Update and draw particles
+    for (let i = 0; i < particles.length; i++) {
+      particles[i].update();
+      particles[i].draw();
+    }
+
+    // Central soft glow
+    drawCenterGlow(p);
+  };
+
+  p.windowResized = function() {
+    const container = document.getElementById('canvas-container');
+    p.resizeCanvas(container.offsetWidth, container.offsetHeight);
+    initSystem(p);
+    p.background(13, 10, 26);
+  };
+};
+
+function initSystem(p) {
+  p.randomSeed(currentSeed);
+  p.noiseSeed(currentSeed);
+  noiseOffset = 0;
+  rings = [];
+  particles = [];
+
+  // Stagger ring birth — they don't all appear at once
+  for (let i = 0; i < PARAMS.ringCount; i++) {
+    rings.push(new MemoryRing(p, i * Math.floor(p.random(30, 80))));
+  }
+
+  for (let i = 0; i < PARAMS.particleCount; i++) {
+    particles.push(new DustParticle(p));
+  }
+}
+
+function drawCenterGlow(p) {
+  const cx = p.width / 2;
+  const cy = p.height / 2;
+  // Soft radial glow — pulsing at low frequency
+  const pulse = Math.sin(p.frameCount * 0.018) * 0.5 + 0.5;
+  const glowAlpha = 12 + pulse * 8;
+  const glowRadius = 80 + pulse * 20;
+
+  p.noStroke();
+  for (let r = glowRadius; r > 0; r -= 8) {
+    const a = glowAlpha * (1 - r / glowRadius);
+    p.fill(168, 85, 247, a);
+    p.ellipse(cx, cy, r * 2);
+  }
+}
+
+// ─── Seed navigation ─────────────────────
+function nextSeed() {
+  currentSeed = Math.floor(Math.random() * 99999) + 1;
+  document.getElementById('seed-display').textContent = currentSeed;
+  if (p5Instance) {
+    initSystem(p5Instance);
+    p5Instance.background(13, 10, 26);
+  }
+}
+
+// ─── CTA handler ─────────────────────────
+function handleCTA() {
+  // Telegram Mini App close + deep link, or just open bot
+  if (window.Telegram && window.Telegram.WebApp) {
+    window.Telegram.WebApp.close();
+  } else {
+    window.open('https://t.me/Melodi_AgentCraft_bot', '_blank');
+  }
+}
+
+// ─── Boot ────────────────────────────────
+window.addEventListener('load', function() {
+  p5Instance = new p5(sketch);
+
+  // Telegram Mini App setup
+  if (window.Telegram && window.Telegram.WebApp) {
+    window.Telegram.WebApp.ready();
+    window.Telegram.WebApp.expand();
+  }
+});
+
+// Expose for seed badge
+window.nextSeed = nextSeed;
+</script>
+</body>
+</html>
