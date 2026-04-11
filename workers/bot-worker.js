@@ -39,14 +39,14 @@ export default {
 
     // Telegram webhook
     if (request.method === "POST") {
-      try {
-        const update = await request.json();
-        await handleUpdate(update, env);
-        return new Response("OK", { status: 200 });
-      } catch (error) {
-        console.error("Worker error:", error);
-        return new Response("Error", { status: 500 });
-      }
+      const update = await request.json();
+      await handleUpdate(update, env);
+      return new Response("OK", { status: 200 });
+    }
+
+    // Suno webhook — receives audio URL from Make.com bridge
+    if (url.pathname === "/webhook/suno") {
+      return handleSunoWebhook(request, env);
     }
 
     // Stripe webhook endpoint
@@ -222,6 +222,25 @@ async function finalizeOrder(chatId, userId, session, env) {
     await sendMessage(chatId,
       `✦ *Prompt crafted* — ${orderRef}\n\n${qualityNote}\n\nYou'll receive a preview within 4 minutes.\n\nQuestions? Reply here anytime.`, null, env);
 
+    // ── Trigger Make.com Suno generation ──
+    if (env.MAKE_WEBHOOK_URL) {
+      const makePayload = {
+        order_ref: orderRef,
+        prompt: enhanced.prompt,
+        customer_telegram_id: userId,
+        recipient_name: order.recipient_name
+      };
+      try {
+        await fetch(env.MAKE_WEBHOOK_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(makePayload)
+        });
+      } catch (makeErr) {
+        console.error("Make.com trigger error:", makeErr);
+      }
+    }
+
   } catch (error) {
     console.error("OpenRouter error:", error);
     // Fallback: save with status still intake_complete for manual retry
@@ -342,6 +361,57 @@ async function handleStripeWebhook(request, env) {
   }
 
   return new Response("OK", { status: 200 });
+}
+
+// ═══════════════════════════════════════════════════
+// SUNO WEBHOOK — receives audio URL from Make.com
+// ═══════════════════════════════════════════════════
+
+async function handleSunoWebhook(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
+
+  const { order_ref, audio_url, status: suno_status } = body;
+
+  if (!order_ref || !audio_url) {
+    return new Response("Missing order_ref or audio_url", { status: 400 });
+  }
+
+  // Update D1 with preview URL
+  await env.DB.prepare(`
+    UPDATE orders SET
+      preview_file_key = ?,
+      status = 'preview_ready',
+      updated_at = datetime('now')
+    WHERE order_ref = ?
+  `).bind(audio_url, order_ref).run();
+
+  // Get customer + order details
+  const order = await env.DB.prepare(`
+    SELECT c.telegram_id, o.recipient_name, o.order_ref
+    FROM orders o
+    JOIN customers c ON o.customer_id = c.id
+    WHERE o.order_ref = ?
+  `).bind(order_ref).first();
+
+  if (order?.telegram_id) {
+    await sendMessage(order.telegram_id,
+      `✦ *Preview ready* — ${order_ref}\n\nYour song for ${order.recipient_name} is ready! 🎵\n\n[🎵 Listen to Preview](${audio_url})\n\n*Next:* Pay $15 for the full 3-minute HD version → /pay`,
+      {
+        inline_keyboard: [
+          [{ text: "💳 Pay $15 for Full Version", callback_data: `pay_${order_ref}` }],
+          [{ text: "🔄 Request New Generation", callback_data: `regen_${order_ref}` }]
+        ]
+      }, env);
+  }
+
+  return new Response(JSON.stringify({ ok: true, order_ref }), {
+    headers: { "Content-Type": "application/json" }
+  });
 }
 
 // ═══════════════════════════════════════════════════
